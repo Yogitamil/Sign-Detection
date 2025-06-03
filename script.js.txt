@@ -1,0 +1,75 @@
+// Load the TensorFlow.js model
+let model;
+tf.loadLayersModel('web_model/model.json').then(m => {
+    model = m;
+    console.log("Model loaded!");
+});
+
+// Setup webcam
+const video = document.getElementById('video');
+navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+    video.srcObject = stream;
+});
+
+// Load MediaPipe Hands
+const hands = new Hands({locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+}});
+hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+});
+
+hands.onResults(gotHands);
+
+// Create a canvas to process the video
+const canvasElement = document.createElement('canvas');
+const canvasCtx = canvasElement.getContext('2d');
+
+async function processVideo() {
+    canvasElement.width = video.videoWidth;
+    canvasElement.height = video.videoHeight;
+    canvasCtx.drawImage(video, 0, 0, canvasElement.width, canvasElement.height);
+    await hands.send({ image: canvasElement });
+    requestAnimationFrame(processVideo);
+}
+video.onloadedmetadata = () => {
+    processVideo();
+};
+
+// Function that runs when hand landmarks are detected
+function gotHands(results) {
+    if (results.multiHandLandmarks && model) {
+        const landmarks = results.multiHandLandmarks[0];
+        
+        // Convert landmarks into a flat array
+        let input = [];
+        for (let i = 0; i < landmarks.length; i++) {
+            input.push(landmarks[i].x, landmarks[i].y, landmarks[i].z);
+        }
+
+        // Normalize relative to wrist
+        const wrist = landmarks[0];
+        let relative = [];
+        for (let i = 0; i < landmarks.length; i++) {
+            relative.push(
+                landmarks[i].x - wrist.x,
+                landmarks[i].y - wrist.y,
+                landmarks[i].z - wrist.z
+            );
+        }
+
+        // Predict
+        const tensor = tf.tensor([relative]);
+        const prediction = model.predict(tensor);
+        prediction.array().then(array => {
+            const classes = ['hello', 'thanks', 'yes', 'no'];  // Change as per your labels
+            const maxIndex = array[0].indexOf(Math.max(...array[0]));
+            document.getElementById('prediction').innerText = "Prediction: " + classes[maxIndex];
+        });
+    } else {
+        document.getElementById('prediction').innerText = "Show hand...";
+    }
+}
